@@ -9,7 +9,7 @@
             <v-icon v-if="inProgress">fas fa-spinner fa-spin</v-icon>
             <span v-else>Convert</span>
           </v-btn>
-          <v-alert v-if="error" type="error" class="mt-8">{{ error }}</v-alert>
+          <v-alert v-if="error" type="error" class="mt-8" style="white-space: pre;">{{ error }}</v-alert>
           <div v-if="result" class="mt-8">
             <v-textarea filled auto-grow :value="result"></v-textarea>
           </div>
@@ -22,6 +22,14 @@
 <script lang="ts">
 import Vue from 'vue';
 
+function isResolved<T>(p: PromiseSettledResult<T>): p is PromiseFulfilledResult<T> {
+  return p.status === 'fulfilled';
+}
+
+function isRejected<T>(p: PromiseSettledResult<T>): p is PromiseRejectedResult {
+  return p.status === 'rejected';
+}
+
 export default Vue.extend({
   name: 'Home',
   data() {
@@ -33,11 +41,12 @@ export default Vue.extend({
       inProgress: false,
       formats: [
         'apa',
-        'mla',
-        'chicago',
-        'harvard',
-        'vancouver',
         'bibtex',
+        'mla',
+        'nature',
+        'science',
+        'turabian-fullnote-bibliography',
+        'vancouver',
       ],
     };
   },
@@ -49,12 +58,20 @@ export default Vue.extend({
         },
       }).then((res) => {
         if (!res.ok) {
-          return res.text().then((v) => Promise.reject(new Error(v)));
+          return res.text()
+            .then((t) => this.handleErrorMsg(doi, t))
+            .then((t) => Promise.reject(new Error(t)));
         }
         return res.text();
-      }, (err) => {
-        return Promise.reject(err);
+      }, () => {
+        return Promise.reject(new Error('Failed to fetch data. Might be caused by unknown format.'));
       });
+    },
+    handleErrorMsg(doi: string, text: string): string {
+      if (text === 'Resource not found.') {
+        return `Invalid doi (${doi}).`;
+      }
+      return text;
     },
     convert(): void {
       // Blur combo to update the value.
@@ -76,8 +93,9 @@ export default Vue.extend({
         this.inProgress = true;
         const accept = this.format === 'bibtex' ? 'application/x-bibtex' : `text/x-bibliography; style=${this.format}`;
         const requests = dois.map((doi) => this.convertOne(doi, accept));
-        Promise.all(requests).then((results) => {
-          this.result = results.join('\n');
+        Promise.allSettled(requests).then((results) => {
+          this.error = results.filter(isRejected).map((p) => p.reason.toString()).join('\n');
+          this.result = results.filter(isResolved).map((p) => p.value).join('\n');
         }, (err) => {
           this.error = err.toString();
         }).finally(() => {
